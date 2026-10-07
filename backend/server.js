@@ -3,12 +3,15 @@ require("dotenv").config();
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
+const helmet = require("helmet");
 const lostItemRoutes = require("./routes/lostItemRoutes");
+const userRoutes = require("./routes/userRoutes");
 
 const app = express();
 const port = process.env.PORT || 5000;
 
 app.use(cors());
+app.use(helmet());
 app.use(express.json());
 
 app.get("/", (req, res) => {
@@ -16,6 +19,7 @@ app.get("/", (req, res) => {
 });
 
 app.use("/api/items", lostItemRoutes);
+app.use("/api/users", userRoutes);
 
 mongoose
   .connect(process.env.MONGO_URI)
