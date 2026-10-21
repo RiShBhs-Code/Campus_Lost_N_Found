@@ -34,12 +34,26 @@ export default function LoginPage({ onLogin }) {
     setError('');
 
     try {
-      // Attempt backend login if available
-      const response = await fetch('http://localhost:8080/api/users/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
+      // Attempt backend login using configurable API URL (supports Docker port 5000 or local 8080)
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+      let response;
+      try {
+        response = await fetch(`${apiUrl}/api/users/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+        });
+      } catch (err) {
+        if (apiUrl !== 'http://localhost:8080') {
+          response = await fetch('http://localhost:8080/api/users/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password }),
+          });
+        } else {
+          throw err;
+        }
+      }
 
       if (response.ok) {
         const data = await response.json();
