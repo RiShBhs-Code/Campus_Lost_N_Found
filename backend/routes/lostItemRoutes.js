@@ -2,7 +2,7 @@ const express = require("express");
 const mongoose = require("mongoose");
 const { body, validationResult } = require("express-validator");
 const LostItem = require("../models/LostItem");
-const protect = require("../middleware/authMiddleware");
+const { protect, authorizeRole } = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
@@ -29,7 +29,7 @@ function isValidId(id) {
   return mongoose.Types.ObjectId.isValid(id);
 }
 
-router.post("/", itemValidation, returnValidationErrors, async (req, res) => {
+router.post("/", protect, itemValidation, returnValidationErrors, async (req, res) => {
   try {
     const item = await LostItem.create(req.body);
     res.status(201).json(item);
@@ -102,7 +102,7 @@ router.put(
   }
 );
 
-router.delete("/:id", protect, async (req, res) => {
+router.delete("/:id", protect, authorizeRole("admin"), async (req, res) => {
   if (!isValidId(req.params.id)) {
     return res.status(400).json({ error: "Invalid item ID" });
   }
