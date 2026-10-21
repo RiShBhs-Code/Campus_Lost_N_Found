@@ -32,6 +32,23 @@ function isValidId(id) {
 router.post("/", protect, itemValidation, returnValidationErrors, async (req, res) => {
   try {
     const item = await LostItem.create(req.body);
+
+    // Broadcast real-time notification to all connected clients
+    const io = req.app.get("io");
+    if (io) {
+      io.emit("itemReported", {
+        message: `New item reported: ${item.itemName}`,
+        item: {
+          id: item._id,
+          name: item.itemName,
+          location: item.location,
+          status: item.status.toLowerCase(),
+          description: item.description,
+          date: "Just now"
+        }
+      });
+    }
+
     res.status(201).json(item);
   } catch (error) {
     if (error.name === "ValidationError") {

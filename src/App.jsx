@@ -1,15 +1,58 @@
-import React, { useState, useContext } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
+import { io } from 'socket.io-client';
 import { useItems } from './useItems';
 import { UserContext } from './UserContext';
 import LoginPage from './LoginPage';
+import { BASE_URL } from './api';
 
 export default function App() {
   const { user, isLoggedIn, login, logout } = useContext(UserContext);
-  const { items, loading, addItem, deleteItem } = useItems();
+  const { items, loading, error: itemsError, addItem, deleteItem, reloadItems } = useItems();
 
   const [filter, setFilter] = useState('all');
   const [showModal, setShowModal] = useState(false);
-  const [formData, setFormData] = useState({ name: '', location: '', status: 'lost' });
+  const [formData, setFormData] = useState({ name: '', location: '', status: 'lost', description: '' });
+  const [submitting, setSubmitting] = useState(false);
+  const [actionError, setActionError] = useState(null);
+
+  // WebSocket Real-Time Notification & Connection Status state
+  const [socketStatus, setSocketStatus] = useState('Connecting...');
+  const [notification, setNotification] = useState(null);
+
+  // Connect to Socket.IO when user is logged in
+  useEffect(() => {
+    if (!isLoggedIn) return;
+
+    const socket = io(BASE_URL, {
+      transports: ['websocket', 'polling'],
+      reconnectionAttempts: 5,
+    });
+
+    socket.on('connect', () => {
+      setSocketStatus('Connected');
+    });
+
+    socket.on('disconnect', () => {
+      setSocketStatus('Disconnected');
+    });
+
+    socket.on('connect_error', () => {
+      setSocketStatus('Disconnected');
+    });
+
+    // Experiment 8: Listen for real-time broadcast when an item is created
+    socket.on('itemReported', (data) => {
+      const msg = data.message || `New item reported: ${data.item?.name || 'Item'}`;
+      setNotification(msg);
+
+      // Re-fetch items from MongoDB so all connected tabs stay in sync
+      reloadItems();
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, [isLoggedIn, reloadItems]);
 
   // If not logged in, show dedicated Login Page with Role selection
   if (!isLoggedIn) {
@@ -19,20 +62,44 @@ export default function App() {
   const isAdmin = user?.role === 'admin';
   const userName = user?.name || user?.email || 'User';
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData.name || !formData.location) return;
 
-    addItem({
-      id: Date.now(),
-      name: formData.name,
-      location: formData.location,
-      status: formData.status,
-      date: 'Just now',
-    });
+    setSubmitting(true);
+    setActionError(null);
 
-    setFormData({ name: '', location: '', status: 'lost' });
-    setShowModal(false);
+    try {
+      // Wire directly to backend POST /api/items using JWT Bearer token
+      await addItem(
+        {
+          name: formData.name,
+          location: formData.location,
+          status: formData.status,
+          description: formData.description || 'Reported lost/found item',
+        },
+        user?.token
+      );
+
+      setFormData({ name: '', location: '', status: 'lost', description: '' });
+      setShowModal(false);
+    } catch (err) {
+      setActionError(err.message || 'Failed to submit item to backend');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDelete = async (itemId) => {
+    if (!window.confirm('Are you sure you want to delete this item?')) return;
+
+    setActionError(null);
+    try {
+      // Wire directly to backend DELETE /api/items/:id using Admin JWT Bearer token
+      await deleteItem(itemId, user?.token);
+    } catch (err) {
+      setActionError(err.message || 'Failed to delete item from backend');
+    }
   };
 
   const filteredItems = items.filter((item) =>
@@ -54,14 +121,25 @@ export default function App() {
           </div>
 
           <div className="flex items-center space-x-3">
+            {/* WebSocket Connection Status Badge */}
+            <div
+              className="flex items-center space-x-1.5 bg-indigo-700/60 px-2.5 py-1 rounded-full border border-indigo-500/40 text-[11px] font-medium"
+              title={`WebSocket Server (${BASE_URL}): ${socketStatus}`}
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  socketStatus === 'Connected' ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'
+                }`}
+              ></span>
+              <span className="text-indigo-100 hidden sm:inline">{socketStatus}</span>
+            </div>
+
             {/* User & Role Badge */}
             <div className="flex items-center space-x-2 bg-indigo-700/60 px-3 py-1.5 rounded-full border border-indigo-500/40 text-xs">
               <span className="font-medium text-white">{userName}</span>
               <span
                 className={`px-2 py-0.5 rounded-full font-bold uppercase tracking-wider text-[10px] ${
-                  isAdmin
-                    ? 'bg-purple-200 text-purple-900'
-                    : 'bg-emerald-200 text-emerald-900'
+                  isAdmin ? 'bg-purple-200 text-purple-900' : 'bg-emerald-200 text-emerald-900'
                 }`}
               >
                 {isAdmin ? '🛡️ Admin' : '🎓 User'}
@@ -70,7 +148,7 @@ export default function App() {
 
             {/* Report Button */}
             <button
-              onClick={() => setShowModal(true)}
+              onClick={() => { setActionError(null); setShowModal(true); }}
               className="bg-white text-indigo-600 font-semibold px-3.5 py-1.5 rounded-lg shadow hover:bg-indigo-50 transition cursor-pointer text-xs sm:text-sm"
             >
               + Report Item
@@ -89,6 +167,38 @@ export default function App() {
 
       {/* MAIN CONTAINER */}
       <main className="max-w-6xl mx-auto px-4 py-8 flex-grow w-full">
+        {/* ACTION / BACKEND ERROR BANNER */}
+        {actionError && (
+          <div className="bg-rose-50 border border-rose-200 text-rose-800 px-4 py-3 rounded-xl mb-6 flex items-center justify-between text-xs font-semibold">
+            <span>⚠️ {actionError}</span>
+            <button onClick={() => setActionError(null)} className="text-rose-500 hover:text-rose-700 font-bold ml-2">
+              &times;
+            </button>
+          </div>
+        )}
+
+        {/* REAL-TIME NOTIFICATION BANNER */}
+        {notification && (
+          <div className="bg-gradient-to-r from-indigo-600 via-indigo-700 to-indigo-800 text-white px-5 py-3.5 rounded-xl shadow-lg mb-6 flex items-center justify-between border border-indigo-400/30 transition-all">
+            <div className="flex items-center space-x-3">
+              <span className="text-2xl animate-bounce">📢</span>
+              <div>
+                <div className="text-[11px] font-bold text-indigo-200 uppercase tracking-wider">
+                  Real-Time Notification (WebSocket)
+                </div>
+                <div className="text-sm font-extrabold tracking-wide">{notification}</div>
+              </div>
+            </div>
+            <button
+              onClick={() => setNotification(null)}
+              className="text-indigo-200 hover:text-white text-xl font-bold px-2 py-0.5 rounded transition cursor-pointer"
+              title="Dismiss notification"
+            >
+              &times;
+            </button>
+          </div>
+        )}
+
         {/* HEADER & ROLE PRIVILEGE BANNER */}
         <div className="mb-6">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
@@ -97,7 +207,7 @@ export default function App() {
                 Campus Lost &amp; Found Radar
               </h1>
               <p className="text-slate-500 text-sm">
-                Real-time dashboard for items reported lost or found across campus
+                Connected to MongoDB backend at <code className="text-indigo-600 font-mono text-xs">{BASE_URL}</code>
               </p>
             </div>
 
@@ -110,19 +220,28 @@ export default function App() {
               }`}
             >
               {isAdmin ? (
-                <>🛡️ Admin Access: You can view, report, and delete items.</>
+                <>🛡️ Admin Privileges: Full access &bull; Can delete any item from MongoDB.</>
               ) : (
-                <>🎓 User Access: You can view and report lost/found items.</>
+                <>🎓 User Privileges: Can view all items &bull; Report new lost/found items.</>
               )}
             </div>
           </div>
         </div>
 
-        {/* FILTER BAR */}
+        {/* FILTER BAR & REFRESH */}
         <section className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">
-            Filter Status ({filteredItems.length} items)
-          </span>
+          <div className="flex items-center space-x-3">
+            <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">
+              Items from MongoDB ({filteredItems.length})
+            </span>
+            <button
+              onClick={reloadItems}
+              className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold flex items-center space-x-1 cursor-pointer"
+              title="Reload from backend"
+            >
+              <span>🔄 Refresh</span>
+            </button>
+          </div>
           <div className="flex items-center space-x-2">
             <label htmlFor="filter-select" className="text-xs text-slate-500 font-medium">Status:</label>
             <select
@@ -140,12 +259,15 @@ export default function App() {
 
         {/* ITEM CARDS GRID */}
         {loading ? (
-          <div className="text-center py-12 text-slate-400 font-medium animate-pulse">
-            Loading items...
+          <div className="text-center py-16 text-slate-400 font-medium">
+            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mb-2"></div>
+            <div>Fetching items from MongoDB backend...</div>
           </div>
         ) : filteredItems.length === 0 ? (
           <div className="text-center py-16 bg-white rounded-xl border border-slate-200 text-slate-500">
-            No items found matching the selected filter.
+            <div className="text-3xl mb-2">🔍</div>
+            <div className="font-semibold text-slate-700">No items found in MongoDB</div>
+            <p className="text-xs text-slate-400 mt-1">Click "+ Report Item" above to create an item directly in MongoDB!</p>
           </div>
         ) : (
           <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -168,7 +290,7 @@ export default function App() {
                     </span>
                   </div>
                   <p className="text-slate-500 text-xs mb-4">
-                    Reported on campus grounds.
+                    {item.description || 'Reported on campus grounds.'}
                   </p>
                 </div>
 
@@ -177,12 +299,12 @@ export default function App() {
                     📍 <strong className="text-slate-700">{item.location}</strong> &bull; {item.date}
                   </div>
 
-                  {/* Admin Delete Action */}
+                  {/* Admin Delete Action connected to DELETE /api/items/:id */}
                   {isAdmin && (
                     <button
-                      onClick={() => deleteItem(item.id)}
+                      onClick={() => handleDelete(item.id)}
                       className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 px-2.5 py-1 rounded-md text-xs font-semibold transition cursor-pointer"
-                      title="Admin-only: Delete Item"
+                      title="Delete from MongoDB (Admin Only)"
                     >
                       Delete
                     </button>
@@ -196,7 +318,7 @@ export default function App() {
 
       {/* FOOTER */}
       <footer className="bg-white border-t border-slate-200 text-slate-400 text-center py-4 text-xs mt-auto">
-        <p>Campus Lost &amp; Found Radar &bull; Full Stack Development</p>
+        <p>Campus Lost &amp; Found Radar &bull; Fully Wired to MongoDB Backend</p>
       </footer>
 
       {/* REPORT ITEM MODAL */}
@@ -213,12 +335,18 @@ export default function App() {
               </button>
             </div>
 
+            {actionError && (
+              <div className="mb-4 p-2.5 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-lg font-medium">
+                {actionError}
+              </div>
+            )}
+
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Item Name</label>
                 <input
                   type="text"
-                  placeholder="e.g. Blue Water Bottle"
+                  placeholder="e.g. Black Wallet"
                   required
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
@@ -250,19 +378,31 @@ export default function App() {
                 />
               </div>
 
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Description (Optional)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Leather wallet with student card inside"
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+              </div>
+
               <div className="flex justify-end space-x-3 pt-2">
                 <button
                   type="button"
                   onClick={() => setShowModal(false)}
-                  className="px-4 py-2 border border-slate-300 text-slate-700 text-xs font-semibold rounded-lg hover:bg-slate-50"
+                  className="px-4 py-2 border border-slate-300 text-slate-700 text-xs font-semibold rounded-lg hover:bg-slate-50 cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow"
+                  disabled={submitting}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow cursor-pointer disabled:opacity-50"
                 >
-                  Submit Report
+                  {submitting ? 'Saving to MongoDB...' : 'Submit to MongoDB'}
                 </button>
               </div>
             </form>

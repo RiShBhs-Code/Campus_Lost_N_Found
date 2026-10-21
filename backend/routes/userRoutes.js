@@ -6,7 +6,7 @@ const { registerUser, loginUser } = require("../controllers/userController");
 const router = express.Router();
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 10,
+  limit: 100,
   message: { message: "Too many authentication attempts. Try again later." }
 });
 
