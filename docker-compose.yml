@@ -1,0 +1,37 @@
+services:
+  # Backend API & WebSocket Service (Node.js + Express + Socket.IO)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: campus-backend
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_HOST_PORT:-8080}:5000"
+    environment:
+      - PORT=5000
+    env_file:
+      - ./backend/.env
+    networks:
+      - campus-network
+
+  # Frontend Web Client Service (React 18 + Vite + Nginx Alpine)
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_URL=${VITE_API_URL:-http://localhost:8080}
+    container_name: campus-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_HOST_PORT:-3000}:80"
+    depends_on:
+      - backend
+    networks:
+      - campus-network
+
+# Isolated bridge network for inter-container communication
+networks:
+  campus-network:
+    driver: bridge
