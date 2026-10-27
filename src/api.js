@@ -1,9 +1,10 @@
 // Resilient API service client connecting Frontend to Backend REST endpoints
-let activeBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080';
+const configuredApiUrl = (import.meta.env.VITE_API_URL || 'http://localhost:8080').trim().replace(/\/+$/, '');
+let activeBaseUrl = configuredApiUrl;
 
 // List of candidate URLs to automatically try (handles IPv4 vs IPv6 and port 8080 vs 5000)
 const CANDIDATE_URLS = [
-  import.meta.env.VITE_API_URL,
+  configuredApiUrl,
   'http://localhost:8080',
   'http://127.0.0.1:8080',
   'http://localhost:5000',

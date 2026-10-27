@@ -4,7 +4,8 @@
   "description": "Experiment 4 REST API for Campus Lost and Found",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --check server.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
